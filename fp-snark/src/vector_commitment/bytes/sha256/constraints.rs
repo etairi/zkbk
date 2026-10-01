@@ -155,6 +155,24 @@ pub fn generate_constraints<ConstraintF: PrimeField>(
 
 }
 
+/// Like [`generate_constraints`], but additionally fixes the position of the opened leaf to
+/// `position` (as circuit constants). See
+/// [`crate::vector_commitment::bytes::pedersen::constraints::generate_constraints_at_position`].
+pub fn generate_constraints_at_position<ConstraintF: PrimeField>(
+    cs: ConstraintSystemRef<ConstraintF>,
+    params: &JZVectorCommitmentParamsVar<ConstraintF>,
+    proof: &mut JZVectorCommitmentOpeningProofVar<ConstraintF>,
+    position: usize,
+) {
+    let num_bits = proof.path_var.auth_path.len() + 1;
+    assert!(position < (1usize << num_bits), "leaf position {} does not fit in a tree of height {}", position, num_bits + 1);
+    let position_bits = (0..num_bits)
+        .map(|i| Boolean::constant((position >> i) & 1 == 1))
+        .collect();
+    proof.path_var.set_leaf_position(position_bits);
+    generate_constraints(cs, params, proof)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

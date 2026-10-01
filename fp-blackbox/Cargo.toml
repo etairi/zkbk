@@ -16,6 +16,10 @@ rand = { version = "0.10.0", default-features = false, features = ["std_rng"] }
 blake3 = { version = "1.8" }
 digest = "0.10"
 
+[dev-dependencies]
+# Canonical attribute encoding shared with the SNARK side (see `tests/canonical_attributes.rs`).
+fp-snark = { path = "../fp-snark" }
+
 [features]
 asm = ["ark-ff/asm"]
 

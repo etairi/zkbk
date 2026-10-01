@@ -19,4 +19,5 @@ pub mod record_commitment;
 pub mod prf;
 pub mod random_oracle;
 pub mod signature;
+pub mod credential;
 pub mod utils;

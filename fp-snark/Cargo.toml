@@ -29,6 +29,15 @@ ark-serialize = { version = "0.5.0", default-features = true }
 
 # curves
 ark-ec = { version = "0.5.0", default-features = false }
+# BLS12-381 is the pairing curve used for Groth16 in [CGLMPS26, §10]. Jubjub
+# (`ark-ed-on-bls12-381`) is the twisted Edwards curve over BLS12-381's scalar field used for
+# Schnorr signatures, the Pedersen-hash Merkle tree and the PRF, so that no non-native
+# arithmetic is needed.
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = [ "curve" ] }
+ark-ed-on-bls12-381 = { version = "0.5.0", default-features = false, features = [ "r1cs" ] }
+# BLS12-377 / BW6-761 form a 2-chain: BW6-761's scalar field is BLS12-377's base field, which
+# lets the `record_commitment::{kzg,pedersen}` gadgets perform BLS12-377 G1 arithmetic natively
+# in a BW6-761 circuit.
 ark-bls12-377 = { version = "0.5.0", default-features = false, features = [ "curve", "r1cs" ] }
 ark-bw6-761 = { version = "0.5.0" }
 ark-ed-on-bls12-377 = { version = "0.5.0", default-features = false, features = [ "r1cs" ] }

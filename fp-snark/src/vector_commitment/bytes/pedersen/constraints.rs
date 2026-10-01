@@ -151,6 +151,31 @@ pub fn generate_constraints<ConstraintF: PrimeField, P: Config, PG: ConfigGadget
 
 }
 
+/// Like [`generate_constraints`], but additionally fixes the position of the opened leaf to
+/// `position` (as circuit constants).
+///
+/// With [`generate_constraints`] alone the leaf position is a free witness: the prover may open
+/// *any* leaf of the tree and the circuit cannot tell which one. Whenever the meaning of a leaf
+/// depends on its position (e.g. "leaf 2 is the citizenship"), the position must be pinned.
+pub fn generate_constraints_at_position<ConstraintF: PrimeField, P: Config, PG: ConfigGadget<P, ConstraintF>>(
+    cs: ConstraintSystemRef<ConstraintF>,
+    params: &JZVectorCommitmentParamsVar<ConstraintF, P, PG>,
+    proof: &mut JZVectorCommitmentOpeningProofVar<ConstraintF, P, PG>,
+    position: usize,
+)
+    where   [u8]: std::borrow::Borrow<<P as Config>::Leaf>,
+            PG: ConfigGadget<P, ConstraintF, Leaf = [UInt8<ConstraintF>]>,
+            P: Config<Leaf = [u8]>
+{
+    let num_bits = proof.path_var.auth_path.len() + 1;
+    assert!(position < (1usize << num_bits), "leaf position {} does not fit in a tree of height {}", position, num_bits + 1);
+    let position_bits = (0..num_bits)
+        .map(|i| Boolean::constant((position >> i) & 1 == 1))
+        .collect();
+    proof.path_var.set_leaf_position(position_bits);
+    generate_constraints(cs, params, proof)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
