@@ -38,6 +38,7 @@ The repository is structured as a Cargo workspace containing two main crates:
 - `fp-snark/src/signature/` – Signature trait with a Schnorr implementation over JubJub.
 - `fp-snark/src/credential/` – Credential schemas with a canonical attribute encoding (Merkle leaves and field elements) and constraint gadgets that decode attributes and evaluate predicates in-circuit.
 - `fp-snark/tests/` – Heavyweight integration tests that compose the primitives into Groth16 circuits (e.g., nullifier PRFs, Pedersen commitments, and membership checks). Design diagrams supporting several tests live under `tests/designs/`.
+- `fp-snark/benches/` – Benchmarks for the `fp-snark` components.
 
 ### `fp-blackbox`
 

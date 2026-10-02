@@ -51,9 +51,15 @@ digest = { version = "0.9" }
 [dev-dependencies]
 ark-relations = { version = "0.5.0", default-features = false }
 ark-algebra-test-templates = { version = "0.5.0", default-features = false }
+criterion = { version = "0.8.2", features = ["html_reports"] }
+rayon = "1"
 
 [features]
 default = ["parallel"]
 # Multi-threaded arkworks (rayon). `fp-blackbox` depends on this crate without it, so that its
 # tests and benchmarks keep the single-threaded build of its own dependencies.
 parallel = ["ark-groth16/parallel"]
+
+[[bench]]
+name = "show_vrc"
+harness = false
