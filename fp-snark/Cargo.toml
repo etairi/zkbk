@@ -24,7 +24,7 @@ ark-std = { version = "0.5.0", default-features = false, features = ["getrandom"
 ark-r1cs-std = { version = "0.5.0", default-features = false }
 ark-crypto-primitives = { version = "0.5.0", default-features = false, features = ["r1cs", "crh", "prf"] }
 ark-snark = { version = "0.5.0", default-features = false }
-ark-groth16 = { version = "0.5.0", default-features = false, features = [ "r1cs", "parallel" ] }
+ark-groth16 = { version = "0.5.0", default-features = false, features = [ "r1cs", "std" ] }
 ark-serialize = { version = "0.5.0", default-features = true }
 
 # curves
@@ -51,3 +51,9 @@ digest = { version = "0.9" }
 [dev-dependencies]
 ark-relations = { version = "0.5.0", default-features = false }
 ark-algebra-test-templates = { version = "0.5.0", default-features = false }
+
+[features]
+default = ["parallel"]
+# Multi-threaded arkworks (rayon). `fp-blackbox` depends on this crate without it, so that its
+# tests and benchmarks keep the single-threaded build of its own dependencies.
+parallel = ["ark-groth16/parallel"]

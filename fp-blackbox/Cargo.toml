@@ -18,7 +18,9 @@ digest = "0.10"
 
 [dev-dependencies]
 # Canonical attribute encoding shared with the SNARK side (see `tests/canonical_attributes.rs`).
-fp-snark = { path = "../fp-snark" }
+# Without default features: fp-snark's `parallel` would otherwise switch on multi-threaded
+# arkworks in this crate's tests and benchmarks.
+fp-snark = { path = "../fp-snark", default-features = false }
 
 [features]
 asm = ["ark-ff/asm"]
