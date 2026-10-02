@@ -563,14 +563,16 @@ fn app6_style_unpinned_opening_lets_the_prover_pick_the_attribute() {
     assert!(!check(1, true));
 }
 
-/// Known issue (not fixed here): the `prf` module instantiates the PRF as a Pedersen CRH of
-/// `input || key`. A Pedersen hash is *linear* in its input bits, so
-/// `P(x || k) - P(x || 0) = P(0 || k)` is independent of `x`. Given two pseudonyms
-/// `p_1 = x(P(x_1 || k))`, `p_2 = x(P(x_2 || k))` for public inputs `x_1, x_2` (e.g. two
-/// issuer identities or contexts), anyone can compute `Δ = P(x_2 || 0) - P(x_1 || 0)`, recover
-/// `±Q_1` from `p_1`, and test whether `x(±Q_1 + Δ) = p_2`. This links pseudonyms across
-/// contexts, contrary to the unlinkability goal of [CGLMPS26, §2.3]. The paper's own
-/// instantiation (§9.1) uses the DDH-based PRF `H(x)^k`; a Poseidon-based PRF would also do.
+/// Known issue of `fp_snark::prf` (the circuit above uses `fp_snark::prf::ddh` instead): it
+/// builds the PRF from the Pedersen hash `P` used in [CGLMPS26, §10] as `x(P(x || k))`. `P` is
+/// *linear* in its input bits, so for inputs `x_1, x_2` of equal length
+/// `P(x_2 || k) = P(x_1 || k) + Δ` with the public `Δ = P(x_2 || 0) - P(x_1 || 0)`. Given
+/// `p_1 = x(P(x_1 || k))` for a public `x_1` (e.g. an issuer identity or a context), anyone can
+/// take the two points with x-coordinate `p_1` (`Q_1` and `-Q_1 + T`, where `T = (0, -1)` has
+/// order two), add `Δ` and obtain `p_2 = x(P(x_2 || k))`. Outputs on all inputs of the same
+/// length are thus predictable from one of them, which links pseudonyms across issuers or
+/// contexts, contrary to the unlinkability goals of [CGLMPS26, §2.2] and to the PRF assumption
+/// in the proof of §7.2. `prf_ddh_vs_pedersen_bls12_381.rs` checks the equal-length condition.
 #[test]
 fn known_issue_pedersen_crh_prf_outputs_are_linkable() {
     use ark_crypto_primitives::crh::CRHScheme;
@@ -591,7 +593,7 @@ fn known_issue_pedersen_crh_prf_outputs_are_linkable() {
         <H as CRHScheme>::evaluate(&prf_params.crh_params, m).unwrap()
     };
     let delta = (hash(&x2, &[0u8; 32]).into_group() - hash(&x1, &[0u8; 32]).into_group()).into_affine();
-    // recover ±Q1 from the x-coordinate p1: a x^2 + y^2 = 1 + d x^2 y^2
+    // the two points with x-coordinate p1 (Q1 and -Q1 + T): a x^2 + y^2 = 1 + d x^2 y^2
     let x = Fq::from_le_bytes_mod_order(&p1);
     let x2_ = x.square();
     let y2 = (Fq::ONE - EdwardsConfig::COEFF_A * x2_) / (Fq::ONE - EdwardsConfig::COEFF_D * x2_);
