@@ -2,6 +2,7 @@
 
 pub mod constraints;
 pub mod config;
+pub mod ddh;
 
 use ark_crypto_primitives::crh::CRHScheme;
 use ark_std::rand::Rng;

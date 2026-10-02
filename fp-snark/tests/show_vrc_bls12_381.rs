@@ -1,7 +1,10 @@
 //! End-to-end credential presentation ("ShowVRC"-style) proof over **BLS12-381**, using the
 //! instantiation described in [CGLMPS26, §10]: Groth16 over BLS12-381, Schnorr signatures
-//! over Jubjub, a Pedersen-hash Merkle tree over Jubjub for the attribute vector, and a PRF
-//! whose outputs are field elements of the SNARK's scalar field.
+//! over Jubjub and a Pedersen-hash Merkle tree over Jubjub for the attribute vector. The
+//! pseudonyms use the DDH PRF `x([K]·H(x))` over Jubjub (`fp_snark::prf::ddh`), the
+//! curve-native form of the `H(x)^sk` suggested in [CGLMPS26, §9.1], instead of the
+//! Pedersen-CRH PRF of `fp_snark::prf`, which is linear and therefore not a PRF (see
+//! `known_issue_pedersen_crh_prf_outputs_are_linkable`).
 //!
 //! Compared with `first_person_test_app6.rs` (which is the same flow over BLS12-377) this test
 //! also closes the *credential encoding* gap:
@@ -29,7 +32,8 @@ use rand_chacha::rand_core::SeedableRng;
 
 use fp_snark::credential::constraints::{parse_leaf, AttributeVar};
 use fp_snark::credential::{AttributeSpec, AttributeType, AttributeValue, CredentialSchema, Leaf};
-use fp_snark::prf::{self, constraints::*, JZPRFInstance, JZPRFParams};
+use fp_snark::prf::ddh::{self, constraints::KeyVar};
+use fp_snark::prf::{self, JZPRFInstance, JZPRFParams};
 use fp_snark::random_oracle::{blake2s::RO, RandomOracle};
 use fp_snark::signature::{schnorr, schnorr::constraints::*, SigVerifyGadget, SignatureScheme};
 use fp_snark::utils;
@@ -38,14 +42,13 @@ use fp_snark::vector_commitment::bytes::pedersen::{
 };
 
 use ark_ed_on_bls12_381::constraints::{EdwardsVar as JubJubVar, FqVar};
-use ark_ed_on_bls12_381::EdwardsProjective as JubJub;
+use ark_ed_on_bls12_381::{EdwardsAffine, EdwardsConfig, EdwardsProjective as JubJub, Fr as JubjubScalar};
 
 // The constraint field is BLS12-381's scalar field, which is Jubjub's base field.
 type ConstraintF = Fr;
 type MT = pedersen::config::ed_on_bls12_381::MerkleTreeParams;
 type MTVar = pedersen::config::ed_on_bls12_381::MerkleTreeParamsVar;
 type H = prf::config::ed_on_bls12_381::Hash;
-type HG = prf::config::ed_on_bls12_381::HashGadget;
 type S = schnorr::Schnorr<JubJub>;
 type SG = SchnorrSignatureVerifyGadget<JubJub, JubJubVar>;
 type SVar = schnorr::constraints::PublicKeyVar<JubJub, JubJubVar>;
@@ -120,7 +123,6 @@ struct ShowCircuit {
     db: JZVectorDB<MT, Leaf>,
     /// Openings supplied by the prover for `OPENED_ATTRIBUTES`, in that order.
     openings: Vec<Opening>,
-    prf_params: JZPRFParams<H>,
     schnorr_parameters: <S as SignatureScheme>::Parameters,
     issuer_public_key: <S as SignatureScheme>::PublicKey,
     /// Issuer's Schnorr signature on `schema.id || root`.
@@ -128,13 +130,14 @@ struct ShowCircuit {
     user_public_key: <S as SignatureScheme>::PublicKey,
     /// Holder's Schnorr signature on the statement digest.
     attestation: <S as SignatureScheme>::Signature,
-    /// PRF_K(ipk): the pseudonym certified in the credential.
-    pseudonym_prf: JZPRFInstance<H>,
-    /// PRF_K(ctx): the pseudonym revealed for this show.
-    context_prf: JZPRFInstance<H>,
+    /// The holder's PRF key K.
+    prf_key: JubjubScalar,
     // public inputs
     statement_digest: ConstraintF,
+    /// PRF_K(ctx): the pseudonym revealed for this show.
     context_pseudonym: ConstraintF,
+    /// H(ipk), computed by the verifier from the issuer key it passes as `issuer_public_key.x`.
+    issuer_prf_base: EdwardsAffine,
 }
 
 const OPENED_ATTRIBUTES: [usize; 5] = [PK_INDEX, PSEUDONYM_INDEX, CITIZENSHIP_INDEX, DOB_INDEX, OCCUPATION_INDEX];
@@ -171,6 +174,8 @@ impl ConstraintSynthesizer<ConstraintF> for ShowCircuit {
         let issuer_pk_x_input = FqVar::new_input(ark_relations::ns!(cs, "issuer_public_key_x"), || Ok(self.issuer_public_key.x))?;
         let statement_digest_var = FqVar::new_input(ark_relations::ns!(cs, "statement_digest"), || Ok(self.statement_digest))?;
         let context_pseudonym_var = FqVar::new_input(ark_relations::ns!(cs, "context_pseudonym"), || Ok(self.context_pseudonym))?;
+        // H(ipk) for the certified pseudonym PRF_K(ipk); allocated as x, then y
+        let issuer_prf_base_var = JubJubVar::new_input(ark_relations::ns!(cs, "issuer_prf_base"), || Ok(self.issuer_prf_base))?;
 
         // ---------------- Merkle openings, pinned to their schema position ----------------
         let params_var = JZVectorCommitmentParamsVar::<ConstraintF, MT, MTVar>::new_constant(cs.clone(), &self.db.vc_params)?;
@@ -218,21 +223,17 @@ impl ConstraintSynthesizer<ConstraintF> for ShowCircuit {
         parsed[0].enforce_bytes_equal(&user_pk_var.pub_key.x.to_bytes_le()?)?;
 
         // ---------------- Pseudonyms: PRF_K(ipk) is certified, PRF_K(ctx) is revealed ------
-        let prf_params_var = JZPRFParamsVar::<H, HG, ConstraintF>::new_constant(cs.clone(), &self.prf_params)?;
-        let pseudonym_prf_var = JZPRFInstanceVar::<ConstraintF>::new_witness(cs.clone(), || Ok(&self.pseudonym_prf))?;
-        prf::constraints::generate_constraints(cs.clone(), &prf_params_var, &pseudonym_prf_var);
-        let context_prf_var = JZPRFInstanceVar::<ConstraintF>::new_witness(cs.clone(), || Ok(&self.context_prf))?;
-        prf::constraints::generate_constraints(cs.clone(), &prf_params_var, &context_prf_var);
-        // same key K in both evaluations
-        enforce_bytes_eq(&pseudonym_prf_var.key_var, &context_prf_var.key_var)?;
-        // PRF_K(ipk): input is the issuer key that verified the certification
-        enforce_bytes_eq(&pseudonym_prf_var.input_var, &issuer_pk_var.pub_key.x.to_bytes_le()?)?;
-        // ... and its output is the certified pseudonym (leaf PSEUDONYM_INDEX)
-        parsed[1].enforce_bytes_equal(&pseudonym_prf_var.output_var[..32])?;
-        // PRF_K(ctx): input is the (constant) context, output is the public pseudonym
-        let context_var: Vec<UInt8<ConstraintF>> = CONTEXT.iter().map(|b| UInt8::constant(*b)).collect();
-        enforce_bytes_eq(&context_prf_var.input_var, &context_var)?;
-        enforce_bytes_eq(&context_prf_var.output_var[..32], &context_pseudonym_var.to_bytes_le()?)?;
+        // DDH PRF over Jubjub, PRF(K, x) = x([K]·H(x)), with one key K for both evaluations.
+        let key_var = KeyVar::<JubjubScalar, ConstraintF>::new_witness(ark_relations::ns!(cs, "prf_key"), || Ok(self.prf_key))?;
+        // PRF_K(ipk): the verifier derives the public input H(ipk) from the same issuer key it
+        // passes as `issuer_public_key_x`; the output is the certified pseudonym (leaf
+        // PSEUDONYM_INDEX)
+        let pseudonym_var = ddh::constraints::evaluate_input_base(&key_var, &issuer_prf_base_var)?;
+        parsed[1].enforce_bytes_equal(&pseudonym_var.to_bytes_le()?)?;
+        // PRF_K(ctx): the context is a circuit constant, so H(ctx) is a fixed base; the output
+        // is the public pseudonym
+        let context_base = ddh::hash_to_curve::<EdwardsConfig>(CONTEXT);
+        ddh::constraints::evaluate_constant_base(&key_var, &context_base)?.enforce_equal(&context_pseudonym_var)?;
 
         // ---------------- The predicate f, on the decoded attributes ----------------
         parsed[2].enforce_enum_in(&ALLOWED_COUNTRIES.map(|c| c as u8))?;
@@ -309,23 +310,23 @@ fn setup_witness(scenario: &Scenario) -> ShowCircuit {
     let schema = schema();
 
     // public parameters
-    let prf_params = JZPRFParams::<H>::trusted_setup(&mut rng);
     let vc_params = JZVectorCommitmentParams::<MT>::trusted_setup(&mut rng);
     let schnorr_parameters = S::setup(&mut rng).unwrap();
 
     // keys
     let (issuer_public_key, issuer_secret_key) = S::keygen(&schnorr_parameters, &mut rng).unwrap();
     let (user_public_key, user_secret_key) = S::keygen(&schnorr_parameters, &mut rng).unwrap();
-    let prf_key = [42u8; 32];
+    let prf_key = JubjubScalar::from_le_bytes_mod_order(&[42u8; 32]);
 
     // issuer-specific pseudonym k_U = PRF_K(ipk), an attribute of the credential (§9.1)
-    let pseudonym_prf = JZPRFInstance::new(&prf_params, &encode_public_key(&issuer_public_key), &prf_key);
+    let issuer_prf_base = ddh::hash_to_curve::<EdwardsConfig>(&encode_public_key(&issuer_public_key));
+    let pseudonym = ddh::evaluate_with_base(&prf_key, &issuer_prf_base);
 
     // the attribute vector, canonically encoded into self-describing leaves
     let (y, m, d) = scenario.date_of_birth;
     let values = vec![
         AttributeValue::Bytes(encode_public_key(&user_public_key)),
-        AttributeValue::Bytes(prf_output(&pseudonym_prf)),
+        AttributeValue::Bytes(pseudonym.into_bigint().to_bytes_le()),
         AttributeValue::String("Alice".into()),
         AttributeValue::Enum(scenario.citizenship as u8),
         AttributeValue::Date { year: y, month: m, day: d },
@@ -346,9 +347,8 @@ fn setup_witness(scenario: &Scenario) -> ShowCircuit {
     let attestation = S::sign(&schnorr_parameters, &user_secret_key, &statement_digest_encoding, &mut rng).unwrap();
 
     // context pseudonym
-    let context_key = if scenario.wrong_context_key { [43u8; 32] } else { prf_key };
-    let context_prf = JZPRFInstance::new(&prf_params, CONTEXT, &context_key);
-    let context_pseudonym = field_from_bytes(&prf_output(&context_prf));
+    let context_key = if scenario.wrong_context_key { JubjubScalar::from_le_bytes_mod_order(&[43u8; 32]) } else { prf_key };
+    let context_pseudonym = ddh::evaluate::<EdwardsConfig>(&context_key, CONTEXT);
 
     // openings
     let opening = |index: usize| Opening { root: db.commitment(), record: db.get_record(index).clone(), path: db.proof(index) };
@@ -364,16 +364,15 @@ fn setup_witness(scenario: &Scenario) -> ShowCircuit {
         schema,
         db,
         openings,
-        prf_params,
         schnorr_parameters,
         issuer_public_key,
         certification,
         user_public_key,
         attestation,
-        pseudonym_prf,
-        context_prf,
+        prf_key,
         statement_digest,
         context_pseudonym,
+        issuer_prf_base,
     }
 }
 
@@ -418,7 +417,15 @@ fn groth16_bls12_381_prove_verify_and_compressed_encoding() {
     println!("Groth16 setup time: {:.2?}", now.elapsed());
 
     let circuit = setup_witness(&Scenario::honest());
-    let public_input = [circuit.issuer_public_key.x, circuit.statement_digest, circuit.context_pseudonym];
+    // the verifier computes H(ipk) itself from the issuer key
+    let issuer_prf_base = ddh::hash_to_curve::<EdwardsConfig>(&encode_public_key(&circuit.issuer_public_key));
+    let public_input = [
+        circuit.issuer_public_key.x,
+        circuit.statement_digest,
+        circuit.context_pseudonym,
+        issuer_prf_base.x,
+        issuer_prf_base.y,
+    ];
 
     let now = std::time::Instant::now();
     let proof = Groth16::<Bls12_381>::prove(&pk, circuit, &mut rng).unwrap();

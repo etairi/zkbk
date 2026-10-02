@@ -33,7 +33,7 @@ The repository is structured as a Cargo workspace containing two main crates:
 - `fp-snark/src/merkle_tree/` – Layered hash configuration trait, path verification, and fixed-height Merkle tree implementation.
 - `fp-snark/src/vector_commitment/bytes/` – Vector commitment interface for byte-array elements.
 - `fp-snark/src/record_commitment/` – Commitment schemes (Pedersen, KZG, SHA-256) with circuit gadgets for record construction.
-- `fp-snark/src/prf/` – JZ PRF abstraction backed by configurable CRHs plus constraint system gadgets.
+- `fp-snark/src/prf/` – JZ PRF abstraction backed by configurable CRHs plus constraint system gadgets, and a DDH-based PRF over twisted Edwards curves (`prf/ddh/`).
 - `fp-snark/src/random_oracle/` – Random oracle trait and a Blake2s-backed implementation for both native and R1CS contexts.
 - `fp-snark/src/signature/` – Signature trait with a Schnorr implementation over JubJub.
 - `fp-snark/src/credential/` – Credential schemas with a canonical attribute encoding (Merkle leaves and field elements) and constraint gadgets that decode attributes and evaluate predicates in-circuit.
