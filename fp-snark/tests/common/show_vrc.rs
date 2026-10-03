@@ -392,6 +392,10 @@ pub fn is_satisfied(scenario: &Scenario) -> bool {
     cs.is_satisfied().unwrap()
 }
 
+/// Groth16 keys for this circuit, for tests and benchmarks only. The RNG is seeded with a fixed
+/// value, so anyone can rerun this setup, recover its trapdoor (α, β, γ, δ) and make proofs that
+/// verify for arbitrary public inputs. Keys for any deployment need a setup whose randomness
+/// nobody keeps (in practice a multi-party ceremony).
 pub fn circuit_setup() -> (ProvingKey<Bls12_381>, VerifyingKey<Bls12_381>) {
     let mut rng = rand_chacha::ChaCha8Rng::from_seed([1u8; 32]);
     let circuit = setup_witness(&Scenario::honest());
